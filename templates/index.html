@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analizador Léxico — Dart</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* ── reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #181c27;
+      --surface2:  #1e2335;
+      --border:    rgba(255,255,255,0.07);
+      --border2:   rgba(255,255,255,0.13);
+      --text:      #e8eaf0;
+      --text-dim:  #7a8099;
+      --text-hint: #4a5070;
+      --accent:    #54c5f8;
+      --accent2:   #7b93fd;
+      --mono:      'JetBrains Mono', monospace;
+      --sans:      'Space Grotesk', sans-serif;
+      --radius:    10px;
+      --radius-sm: 6px;
+
+      /* token colors */
+      --kw:    #c792ea;
+      --type:  #82aaff;
+      --num:   #f78c6c;
+      --str:   #c3e88d;
+      --bool:  #ffcb6b;
+      --id:    #e8eaf0;
+      --op:    #89ddff;
+      --sym:   #7a8099;
+      --cmt:   #546e7a;
+      --err:   #ff5370;
+      --ws:    #3a4060;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); }
+
+    /* ── layout ── */
+    .app {
+      display: grid;
+      grid-template-rows: 56px 1fr;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── topbar ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      gap: 16px;
+    }
+    .topbar-logo {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .dart-icon {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, #54c5f8, #01579b);
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700; color: #fff; letter-spacing: -0.5px;
+    }
+    .topbar h1 { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.2px; }
+    .topbar-sub { font-size: 12px; color: var(--text-dim); }
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+    /* ── main ── */
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+    }
+
+    /* ── editor panel ── */
+    .editor-panel {
+      display: flex; flex-direction: column;
+      border-right: 1px solid var(--border);
+    }
+    .panel-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .panel-title { font-size: 12px; font-weight: 500; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+    .panel-spacer { flex: 1; }
+
+    /* examples */
+    .examples { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+    .ex-label { font-size: 11px; color: var(--text-hint); align-self: center; margin-right: 2px; }
+    .ex-btn {
+      font-family: var(--sans); font-size: 11px; padding: 3px 10px;
+      border-radius: 20px; border: 1px solid var(--border2);
+      background: transparent; color: var(--text-dim); cursor: pointer;
+      transition: all .15s;
+    }
+    .ex-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+
+    /* editor */
+    .editor-wrap { flex: 1; position: relative; overflow: hidden; display: flex; }
+    .line-nums {
+      padding: 14px 0 14px 12px;
+      font-family: var(--mono); font-size: 13px; line-height: 1.7;
+      color: var(--text-hint); background: var(--surface);
+      border-right: 1px solid var(--border);
+      text-align: right;
+      min-width: 44px;
+      user-select: none;
+      white-space: pre;
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+    .line-nums::-webkit-scrollbar { display: none; }
+    #code-input {
+      flex: 1;
+      padding: 14px 16px;
+      font-family: var(--mono); font-size: 13px; line-height: 1.7;
+      background: var(--surface); color: var(--text);
+      border: none; outline: none; resize: none;
+      tab-size: 2;
+      overflow-y: auto;
+    }
+    #code-input::placeholder { color: var(--text-hint); }
+
+    /* toolbar */
+    .editor-toolbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .btn-analyze {
+      font-family: var(--sans); font-size: 13px; font-weight: 600;
+      padding: 7px 20px; border-radius: var(--radius-sm);
+      background: var(--accent); color: #0a1628;
+      border: none; cursor: pointer; transition: opacity .15s;
+    }
+    .btn-analyze:hover { opacity: 0.88; }
+    .btn-analyze:active { opacity: 0.75; }
+    .btn-clear {
+      font-family: var(--sans); font-size: 13px;
+      padding: 7px 14px; border-radius: var(--radius-sm);
+      background: transparent; color: var(--text-dim);
+      border: 1px solid var(--border2); cursor: pointer; transition: all .15s;
+    }
+    .btn-clear:hover { background: var(--surface2); color: var(--text); }
+
+    .toggle-label {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text-dim); cursor: pointer; margin-left: auto;
+    }
+    .toggle-label input { cursor: pointer; accent-color: var(--accent); }
+
+    /* ── output panel ── */
+    .output-panel { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* stats bar */
+    .stats-bar {
+      display: flex; gap: 16px; align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+      font-size: 12px; color: var(--text-dim);
+      flex-wrap: wrap;
+    }
+    .stat { display: flex; align-items: center; gap: 5px; }
+    .stat strong { color: var(--text); font-weight: 500; }
+    .stat.err strong { color: var(--err); }
+    .stat-sep { color: var(--border2); }
+
+    /* table */
+    .table-wrap { flex: 1; overflow-y: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { position: sticky; top: 0; z-index: 2; background: var(--surface2); }
+    th {
+      padding: 9px 14px; text-align: left;
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.07em;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 6px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tr:hover td { background: rgba(255,255,255,0.025); }
+    tr.err-row td { background: rgba(255,83,112,0.05); }
+
+    .td-pos { font-family: var(--mono); font-size: 11px; color: var(--text-hint); white-space: nowrap; }
+    .td-lexeme { font-family: var(--mono); font-size: 12px; color: var(--text); white-space: pre; }
+    .td-lexeme.lex-err { color: var(--err); }
+    .td-type { white-space: nowrap; }
+
+    /* badges */
+    .badge {
+      display: inline-flex; align-items: center; padding: 2px 8px;
+      border-radius: 20px; font-size: 11px; font-weight: 500; font-family: var(--sans);
+      white-space: nowrap; gap: 4px;
+    }
+    .badge-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+
+    /* err tip */
+    .err-tip { font-size: 11px; color: var(--err); padding: 2px 0 0; opacity: 0.8; }
+
+    /* empty / loading */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; color: var(--text-hint); gap: 10px; font-size: 14px;
+    }
+    .empty-icon { font-size: 36px; opacity: 0.25; }
+
+    /* tab strip (token breakdown) */
+    .breakdown-panel {
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+      padding: 10px 16px;
+    }
+    .breakdown-title { font-size: 11px; color: var(--text-hint); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; }
+    .breakdown-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .b-chip {
+      font-family: var(--sans); font-size: 11px;
+      padding: 3px 10px; border-radius: 20px;
+      border: 1px solid var(--border2);
+      color: var(--text-dim);
+      display: flex; gap: 5px; align-items: center;
+    }
+    .b-chip strong { color: var(--text); }
+
+    /* scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+    /* loading spinner */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid var(--border2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading .spinner { display: inline-block; }
+    .loading .btn-analyze { opacity: 0.5; pointer-events: none; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- topbar -->
+  <header class="topbar">
+    <div class="topbar-logo">
+      <div class="dart-icon">D</div>
+      <div>
+        <h1>Analizador Léxico — Dart</h1>
+      </div>
+    </div>
+    <span class="topbar-sub">Teoría de Computabilidad · AFD manual en Python</span>
+    <div class="topbar-right">
+      <div class="spinner" id="spinner"></div>
+    </div>
+  </header>
+
+  <!-- main -->
+  <div class="main">
+
+    <!-- editor -->
+    <div class="editor-panel">
+      <div class="panel-header">
+        <span class="panel-title">Código fuente Dart</span>
+      </div>
+      <div class="examples">
+        <span class="ex-label">Ejemplos:</span>
+        <button class="ex-btn" onclick="loadExample('simple')">Simple</button>
+        <button class="ex-btn" onclick="loadExample('intermedio')">Intermedio</button>
+        <button class="ex-btn" onclick="loadExample('avanzado')">Avanzado</button>
+        <button class="ex-btn" onclick="loadExample('error')">Con errores</button>
+      </div>
+      <div class="editor-wrap">
+        <div class="line-nums" id="line-nums">1</div>
+        <textarea id="code-input" spellcheck="false" placeholder="// Escribí código Dart acá...&#10;void main() {&#10;  print('Hola Dart!');&#10;}"></textarea>
+      </div>
+      <div class="editor-toolbar">
+        <button class="btn-analyze" onclick="analyze()">Analizar</button>
+        <button class="btn-clear" onclick="clearAll()">Limpiar</button>
+        <label class="toggle-label">
+          <input type="checkbox" id="show-ws" onchange="analyze()"> Mostrar blancos
+        </label>
+      </div>
+    </div>
+
+    <!-- output -->
+    <div class="output-panel">
+      <div class="panel-header">
+        <span class="panel-title">Tabla de tokens</span>
+      </div>
+
+      <div class="stats-bar" id="stats-bar">
+        <span style="color:var(--text-hint);font-size:12px;">— ingresá código y presioná Analizar —</span>
+      </div>
+
+      <div class="table-wrap" id="table-wrap">
+        <div class="empty-state" id="empty-state">
+          <div class="empty-icon">⟨ ⟩</div>
+          <span>Ningún token todavía</span>
+        </div>
+        <table id="token-table" style="display:none">
+          <thead>
+            <tr>
+              <th>Línea</th>
+              <th>Lexema</th>
+              <th>Componente léxico</th>
+            </tr>
+          </thead>
+          <tbody id="token-body"></tbody>
+        </table>
+      </div>
+
+      <div class="breakdown-panel" id="breakdown-panel" style="display:none">
+        <div class="breakdown-title">Distribución de tokens</div>
+        <div class="breakdown-chips" id="breakdown-chips"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── badge config ──
+const BADGE_CFG = {
+  'KEYWORD':        { label: 'Palabra reservada', color: '#c792ea', bg: 'rgba(199,146,234,0.12)' },
+  'TYPE':           { label: 'Tipo primitivo',     color: '#82aaff', bg: 'rgba(130,170,255,0.12)' },
+  'LIT_INT':        { label: 'Constante entera',   color: '#f78c6c', bg: 'rgba(247,140,108,0.12)' },
+  'LIT_DOUBLE':     { label: 'Constante real',     color: '#f78c6c', bg: 'rgba(247,140,108,0.12)' },
+  'LIT_STRING_SQ':  { label: 'Cadena (\'...\')',   color: '#c3e88d', bg: 'rgba(195,232,141,0.12)' },
+  'LIT_STRING_DQ':  { label: 'Cadena ("...")',     color: '#c3e88d', bg: 'rgba(195,232,141,0.12)' },
+  'LIT_BOOL':       { label: 'Literal booleano',   color: '#ffcb6b', bg: 'rgba(255,203,107,0.12)' },
+  'LIT_NULL':       { label: 'Literal null',       color: '#ffcb6b', bg: 'rgba(255,203,107,0.12)' },
+  'IDENTIFIER':     { label: 'Identificador',      color: '#e8eaf0', bg: 'rgba(232,234,240,0.08)' },
+  'OP_ARITH':       { label: 'Op. aritmético',     color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_ASSIGN':      { label: 'Op. asignación',     color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_COMPARE':     { label: 'Op. comparación',    color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_LOGIC':       { label: 'Op. lógico',         color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_BITWISE':     { label: 'Op. bit a bit',      color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_TERNARY':     { label: 'Op. ternario',       color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_CASCADE':     { label: 'Op. cascada (..)',   color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_SPREAD':      { label: 'Op. spread (...)',   color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_NULL':        { label: 'Op. null-aware',     color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_ARROW':       { label: 'Op. flecha (=>)',    color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'OP_TYPE':        { label: 'Op. tipo',           color: '#89ddff', bg: 'rgba(137,221,255,0.10)' },
+  'DELIMITER':      { label: 'Delimitador',        color: '#7a8099', bg: 'rgba(122,128,153,0.10)' },
+  'COMMENT_LINE':   { label: 'Comentario línea',   color: '#546e7a', bg: 'rgba(84,110,122,0.12)' },
+  'COMMENT_BLOCK':  { label: 'Comentario bloque',  color: '#546e7a', bg: 'rgba(84,110,122,0.12)' },
+  'WHITESPACE':     { label: 'Blanco',             color: '#3a4060', bg: 'rgba(58,64,96,0.15)' },
+  'NEWLINE':        { label: 'Salto de línea',     color: '#3a4060', bg: 'rgba(58,64,96,0.15)' },
+  'ERROR':          { label: 'Error léxico',       color: '#ff5370', bg: 'rgba(255,83,112,0.12)' },
+};
+
+function badgeFor(key) {
+  const cfg = BADGE_CFG[key] || { label: key, color: '#7a8099', bg: 'rgba(122,128,153,0.10)' };
+  return `<span class="badge" style="color:${cfg.color};background:${cfg.bg};border:1px solid ${cfg.color}22">
+    <span class="badge-dot" style="background:${cfg.color}"></span>${cfg.label}
+  </span>`;
+}
+
+// ── examples ──
+const EXAMPLES = {
+  simple: `// Caso simple
+void main() {
+  int x = 10;
+  double pi = 3.14;
+  print(x + pi);
+}`,
+  intermedio: `// Caso intermedio
+class Persona {
+  final String nombre;
+  int edad;
+
+  Persona(this.nombre, this.edad);
+
+  String saludar() => 'Hola, soy $nombre';
+}
+
+void main() {
+  var p = Persona('Ana', 25);
+  if (p.edad >= 18) {
+    print(p.saludar());
+  } else {
+    print('Es menor');
+  }
+}`,
+  avanzado: `// Operadores avanzados de Dart
+void main() {
+  // null-aware
+  String? nombre = null;
+  String saludo = nombre ?? 'Desconocido';
+
+  // cascade
+  List<int> nums = []
+    ..add(1)
+    ..add(2)
+    ..add(3);
+
+  // spread
+  var a = [0, ...nums];
+
+  // ternario
+  int x = 5;
+  String res = x > 3 ? 'mayor' : 'menor';
+
+  // is / as
+  Object obj = 42;
+  if (obj is int) {
+    print((obj as int) * 2);
+  }
+
+  // integer division y módulo
+  int div = 17 ~/ 5;
+  int mod = 17 % 5;
+  print('$saludo $div $mod $res');
+}`,
+  error: `// Caso con errores léxicos
+void main() {
+  int x = 10;
+  String s = "hola mundo;   // cadena sin cerrar
+  int y = @;                // carácter ilegal
+  double z = 3.14.59;      // número mal formado
+  /* comentario sin cerrar
+  print(x + y);
+}`,
+};
+
+function loadExample(key) {
+  document.getElementById('code-input').value = EXAMPLES[key];
+  updateLineNums();
+  analyze();
+}
+
+// ── line numbers ──
+function updateLineNums() {
+  const lines = document.getElementById('code-input').value.split('\n').length;
+  document.getElementById('line-nums').textContent = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+}
+
+document.getElementById('code-input').addEventListener('input', updateLineNums);
+document.getElementById('code-input').addEventListener('scroll', function() {
+  document.getElementById('line-nums').scrollTop = this.scrollTop;
+});
+document.getElementById('code-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const s = this.selectionStart, en = this.selectionEnd;
+    this.value = this.value.slice(0, s) + '  ' + this.value.slice(en);
+    this.selectionStart = this.selectionEnd = s + 2;
+    updateLineNums();
+  }
+});
+
+updateLineNums();
+
+// ── analyze ──
+async function analyze() {
+  const source = document.getElementById('code-input').value;
+  const showWS = document.getElementById('show-ws').checked;
+  if (!source.trim()) { clearAll(); return; }
+
+  document.querySelector('.app').classList.add('loading');
+
+  const resp = await fetch('/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source, include_whitespace: showWS }),
+  });
+  const data = await resp.json();
+
+  document.querySelector('.app').classList.remove('loading');
+
+  renderStats(data);
+  renderTable(data.tokens);
+  renderBreakdown(data.counts);
+}
+
+function renderStats(data) {
+  const bar = document.getElementById('stats-bar');
+  const errStyle = data.errors > 0 ? 'color:#ff5370;font-weight:500' : '';
+  bar.innerHTML = `
+    <div class="stat"><span>Tokens totales</span><strong>${data.total}</strong></div>
+    <span class="stat-sep">·</span>
+    <div class="stat"><span>Visibles</span><strong>${data.visible}</strong></div>
+    <span class="stat-sep">·</span>
+    <div class="stat"><span>Líneas</span><strong>${data.lines}</strong></div>
+    <span class="stat-sep">·</span>
+    <div class="stat ${data.errors > 0 ? 'err' : ''}"><span>Errores</span><strong style="${errStyle}">${data.errors}</strong></div>
+  `;
+}
+
+function renderTable(tokens) {
+  const empty = document.getElementById('empty-state');
+  const tbl   = document.getElementById('token-table');
+  const tbody = document.getElementById('token-body');
+
+  if (!tokens.length) {
+    empty.style.display = 'flex';
+    tbl.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  tbl.style.display = 'table';
+
+  tbody.innerHTML = tokens.map(tok => {
+    const isErr = tok.type_key === 'ERROR';
+    const lex = tok.lexeme
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/ /g,'·').replace(/\t/g,'→').replace(/\n/g,'↵');
+    const errTip = isErr && tok.error_msg
+      ? `<div class="err-tip">${tok.error_msg}</div>` : '';
+    return `<tr class="${isErr ? 'err-row' : ''}">
+      <td class="td-pos">${tok.line}:${tok.col}</td>
+      <td><span class="td-lexeme${isErr?' lex-err':''}">${lex}</span>${errTip}</td>
+      <td class="td-type">${badgeFor(tok.type_key)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderBreakdown(counts) {
+  const panel = document.getElementById('breakdown-panel');
+  const chips = document.getElementById('breakdown-chips');
+  const entries = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+  if (!entries.length) { panel.style.display = 'none'; return; }
+
+  panel.style.display = 'block';
+  chips.innerHTML = entries.map(([type, count]) => {
+    const key = Object.keys(BADGE_CFG).find(k => BADGE_CFG[k].label === type) || '';
+    const cfg = BADGE_CFG[key] || { color: '#7a8099' };
+    return `<div class="b-chip">
+      <span class="badge-dot" style="background:${cfg.color}"></span>
+      ${type} <strong>${count}</strong>
+    </div>`;
+  }).join('');
+}
+
+function clearAll() {
+  document.getElementById('code-input').value = '';
+  document.getElementById('token-body').innerHTML = '';
+  document.getElementById('empty-state').style.display = 'flex';
+  document.getElementById('token-table').style.display = 'none';
+  document.getElementById('breakdown-panel').style.display = 'none';
+  document.getElementById('stats-bar').innerHTML = '<span style="color:var(--text-hint);font-size:12px;">— ingresá código y presioná Analizar —</span>';
+  updateLineNums();
+}
+</script>
+</body>
+</html>
